@@ -58,6 +58,43 @@ python main.py
 
 Stop the proxy with `Ctrl+C`.
 
+## Architecture
+
+```mermaid
+flowchart TB
+    Client["Minecraft Client"]
+
+    subgraph Minto["Minto Proxy"]
+        direction TB
+        Listener["TCP Listener"]
+        Handshake["Handshake Sniffer (0x00)"]
+        IPACL["IP Access Control"]
+
+        subgraph Status["Status Path"]
+            MOTD["MOTD + Favicon"]
+            Ping["Ping Mode"]
+        end
+
+        subgraph Login["Login Path"]
+            NameACL["Name Access Control"]
+            MaxLimit["Max-Player Limit"]
+            Rewrite["Hostname Rewrite"]
+            Tunnel["Bidirectional Pipe"]
+        end
+    end
+
+    Backend["Backend Server"]
+
+    Client --> Listener --> Handshake --> IPACL
+    IPACL -->|status| Status
+    IPACL -->|login| Login
+    Client <--> MOTD
+    Client <--> Ping
+    NameACL --> MaxLimit --> Rewrite --> Backend
+    Backend <--> Tunnel
+    Client <--> Tunnel
+```
+
 ## Configuration
 
 Configuration lives in `config/config.json` (auto-generated on first run). A service looks like:
