@@ -6,6 +6,10 @@ It sits between Minecraft clients and a backend server, transparently inspects t
 
 ---
 
+## Screenshots
+
+![Screenshot 1](assets/screenshot-1.png)
+
 ## Why Minto?
 
 - **Zero dependencies** — runs on the Python standard library alone (`asyncio`, `struct`, `zlib`, …). Nothing to `pip install`.

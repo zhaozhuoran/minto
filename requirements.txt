@@ -1,0 +1,2 @@
+# Minto Proxy third-party dependencies (None required by default, but colorama or watchdog can be used later)
+# Minto is built entirely using standard Python libraries to keep it clean, highly compatible and fast.
