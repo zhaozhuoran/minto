@@ -28,9 +28,7 @@ Networking
 Server List (MOTD)
 
 - Custom MOTD
-- Generated favicon
-- Ping modes
-- Online player override
+- Custom favicon
 
 Security
 
@@ -150,9 +148,13 @@ python -m unittest discover -s tests
 ## Roadmap
 
 - Config hot-reload & modular routing engine
-- TLS SNI sniffing & domain-based routing
-- PROXY protocol (v1/v2), SOCKS outbound, UDP proxy
 - Linux socket performance optimizations
+
+## 🌟 Project Origin
+
+This project was developed as part of HackClub Stardance.
+
+View the original project page: [https://stardance.hackclub.com/projects/33308](https://stardance.hackclub.com/projects/33308)
 
 ## License
 
