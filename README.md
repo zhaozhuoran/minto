@@ -27,17 +27,21 @@ Networking
 
 Server List (MOTD)
 
-- Custom MOTD
-- Custom favicon
+- Custom MOTD (with `{NAME}`, `{HOST}`, `{PORT}` placeholders)
+- Custom favicon (in-code PNG generator or your own base64)
+- Ping handling: `disconnect` / `0ms` / `normal`
+- Optional live ping-delay (latency) display
+- Optional backend player-count passthrough
 
 Security
 
 - IP allow/deny
 - Player allow/deny
+- Max-player limit
 
 Misc
 
-- Logging
+- Config-driven multi-service logging
 - Multi-service
 
 ## Requirements
@@ -103,26 +107,42 @@ Configuration lives in `config/config.json` (auto-generated on first run). A ser
 
 ```jsonc
 {
-  "Name": "Hypixel-in",
-  "Listen": 25565,
-  "TargetAddress": "mc.hypixel.net",
-  "TargetPort": 25565,
-  "IPAccess": { "Mode": "", "List": [] },
-  "Minecraft": {
-    "EnableHostnameRewrite": true,
-    "RewrittenHostname": "mc.hypixel.net",
-    "OnlineCount": { "Max": 2026, "Online": -1, "EnableMaxLimit": false },
-    "NameAccess": { "Mode": "", "List": [] },
-    "PingMode": "disconnect",
-    "MotdFavicon": "{DEFAULT_MOTD}",
-    "MotdDescription": "§d{NAME}§e, provided by Minto §a§o\n§c§lProxy for §6§n{HOST}:{PORT}§r",
-  },
+  "Log": { "Level": "INFO", "Console": true, "File": true },
+  "Services": [
+    {
+      "Name": "Hypixel-in",
+      "Listen": 25565,
+      "TargetAddress": "mc.hypixel.net",
+      "TargetPort": 25565,
+      "IPAccess": { "Mode": "", "List": [] },
+      "Minecraft": {
+        "EnableHostnameRewrite": true,
+        "RewrittenHostname": "mc.hypixel.net",
+        "EnablePingDelay": false,
+        "OnlineCount": {
+          "Max": 2026,
+          "Online": -1,
+          "ShowSourcePlayers": false,
+          "EnableMaxLimit": false
+        },
+        "NameAccess": { "Mode": "", "List": [] },
+        "PingMode": "disconnect",
+        "MotdFavicon": "{DEFAULT_MOTD}",
+        "MotdDescription": "§d{NAME}§e, provided by Minto §a§o\n§c§lProxy for §6§n{HOST}:{PORT}§r"
+      }
+    }
+  ]
 }
 ```
 
+- `Log`: global logging settings — `Level` (`DEBUG`/`INFO`/`WARNING`/`ERROR`), `Console` and `File` toggles.
 - `IPAccess` / `NameAccess` `Mode`: `""` (disabled), `"accept"` (allow-list), or `"deny"` (block-list).
 - `MotdFavicon`: `"{DEFAULT_MOTD}"` for the built-in icon, or any `data:image/png;base64,...` string.
-- `OnlineCount.Online`: `-1` reports the live connection count.
+- `OnlineCount.Online`: `-1` (default) reports the live proxy connection count; any `>= 0` value is shown as-is.
+- `OnlineCount.ShowSourcePlayers`: when `true`, Minto queries the backend for its real online/max player counts (5s cache, 3s timeout).
+- `OnlineCount.EnableMaxLimit`: when `true`, reject logins once the live connection count reaches `Max`.
+- `EnablePingDelay`: when `true`, report the client-to-proxy latency on ping (overrides `PingMode`).
+- `PingMode`: `"disconnect"` (no response), `"0ms"` (fake zero latency), or `"normal"` (relay the client's payload back).
 
 ## Project Layout
 
@@ -131,7 +151,7 @@ main.py              Entry point: banner, config load, services, signal handling
 minto/
   config.py          ConfigManager + default config template
   logger.py          Colored logger with daily zip archiving
-  proxy.py           Proxy instance + bidirectional tunnel
+  proxy.py           Proxy instance + bidirectional tunnel + MOTD/ping handling
   protocol/
     varint.py        VarInt encode/decode
     packet.py        Handshake / Login Start packets

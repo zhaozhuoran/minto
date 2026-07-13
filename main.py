@@ -18,8 +18,14 @@ async def shutdown(logger_instance, proxy_instances):
     """Graceful shutdown of all services and timers."""
     logging.info("Initiating graceful shutdown...")
     for inst in proxy_instances:
-        await inst.stop()
-    await logger_instance.stop()
+        try:
+            await asyncio.wait_for(inst.stop(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logging.warning(f"Timeout stopping a proxy instance; proceeding.")
+    try:
+        await asyncio.wait_for(logger_instance.stop(), timeout=3.0)
+    except asyncio.TimeoutError:
+        logging.warning("Timeout stopping logger; proceeding.")
     logging.info("All services shutdown. Goodbye!")
 
 

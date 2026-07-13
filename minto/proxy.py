@@ -4,7 +4,7 @@ import json
 from typing import Dict, Any, List
 
 from minto.protocol.varint import read_varint, encode_varint
-from minto.protocol.packet import HandshakePacket, LoginStartPacket, create_packet, write_string
+from minto.protocol.packet import HandshakePacket, LoginStartPacket, create_packet, write_string, read_string
 from minto.protocol.favicon import generate_minto_favicon_b64
 
 logger = logging.getLogger("MintoProxy")
@@ -24,11 +24,27 @@ class MinecraftProxyInstance:
         self.mc_config = service_config.get("Minecraft", {})
         self.enable_hostname_rewrite = self.mc_config.get("EnableHostnameRewrite", True)
         self.rewritten_hostname = self.mc_config.get("RewrittenHostname", self.target_address)
+        self.enable_ping_delay = self.mc_config.get("EnablePingDelay", False)
 
         self.online_count_config = self.mc_config.get("OnlineCount", {})
-        self.max_players = self.online_count_config.get("Max", 2026)
-        self.online_override = self.online_count_config.get("Online", -1)
+        self.show_source_players = self.online_count_config.get("ShowSourcePlayers", False)
         self.enable_max_limit = self.online_count_config.get("EnableMaxLimit", False)
+
+        max_val = self.online_count_config.get("Max")
+        online_val = self.online_count_config.get("Online")
+
+        if max_val is not None and max_val >= 0:
+            self.user_specified_max = max_val
+        else:
+            self.user_specified_max = None
+
+        if online_val is not None and online_val >= 0:
+            self.user_specified_online = online_val
+        else:
+            self.user_specified_online = None
+
+        # Determine default/fallback max players
+        self.max_players = self.user_specified_max if self.user_specified_max is not None else 1005
 
         self.name_access_mode = self.mc_config.get("NameAccess", {}).get("Mode", "").lower()
         self.name_access_list = self.mc_config.get("NameAccess", {}).get("List", [])
@@ -39,6 +55,10 @@ class MinecraftProxyInstance:
 
         self.server = None
         self._active_connections = 0
+        self._conn_tasks = set()
+
+        self._source_players_cache = None
+        self._source_cache_duration = 5.0
 
     def check_ip_access(self, ip: str) -> bool:
         """Returns True if the IP is allowed, False otherwise."""
@@ -64,11 +84,8 @@ class MinecraftProxyInstance:
             return not is_in_list
         return True
 
-    def generate_motd_json(self, protocol_version: int) -> bytes:
+    def generate_motd_json(self, protocol_version: int, online: int = 0, max_players: int = 1005) -> bytes:
         """Generates MOTD JSON byte response for client status query."""
-        # Compute online players count
-        online = self.online_override if self.online_override >= 0 else self._active_connections
-
         # Determine favicon (custom pure colored PNG is generated here)
         favicon_str = self.motd_favicon
         if favicon_str == "{DEFAULT_MOTD}":
@@ -86,7 +103,7 @@ class MinecraftProxyInstance:
                 "protocol": protocol_version
             },
             "players": {
-                "max": self.max_players,
+                "max": max_players,
                 "online": online
             },
             "description": {
@@ -98,7 +115,82 @@ class MinecraftProxyInstance:
 
         return json.dumps(motd_obj, ensure_ascii=False).encode("utf-8")
 
+    async def query_source_server(self, protocol_version: int) -> tuple[int, int]:
+        """Queries the backend/source server to retrieve online and max players, using cache and full operation timeout."""
+        import time
+        now = time.time()
+        if self._source_players_cache:
+            online, max_players, expiry = self._source_players_cache
+            if now < expiry:
+                return online, max_players
+
+        async def _do_query():
+            server_reader, server_writer = None, None
+            try:
+                server_reader, server_writer = await asyncio.open_connection(self.target_address, self.target_port)
+
+                # Send handshake packet
+                handshake = HandshakePacket(
+                    protocol_version=protocol_version,
+                    server_address=self.target_address,
+                    server_port=self.target_port,
+                    next_state=1  # status
+                )
+                server_writer.write(handshake.encode())
+
+                # Send status request packet (0x01 length, 0x00 ID, empty payload)
+                status_request = create_packet(0x00, b"")
+                server_writer.write(status_request)
+                await server_writer.drain()
+
+                # Read status response
+                packet_len, _ = await read_varint(server_reader)
+                if packet_len <= 0 or packet_len > 1024 * 1024:
+                    raise ValueError(f"Invalid MOTD response packet length {packet_len}")
+
+                packet_id, id_len = await read_varint(server_reader)
+                if packet_id != 0x00:
+                    raise ValueError(f"Expected Status Response packet (0x00) but got {packet_id}")
+
+                payload_len = packet_len - id_len
+                if payload_len <= 0 or payload_len > 1024 * 1024:
+                    raise ValueError(f"Invalid MOTD payload length {payload_len}")
+
+                payload = await server_reader.readexactly(payload_len)
+
+                # Decode VarInt prefixed string manually to bypass 32767 limit
+                from minto.protocol.varint import read_varint_from_buffer
+                str_len, str_len_bytes = read_varint_from_buffer(payload, 0)
+                json_bytes = payload[str_len_bytes : str_len_bytes + str_len]
+                json_str = json_bytes.decode("utf-8")
+
+                # Parse JSON
+                data = json.loads(json_str)
+                players_data = data.get("players", {})
+                online = int(players_data.get("online", 0))
+                max_players = int(players_data.get("max", 0))
+
+                return online, max_players
+            finally:
+                if server_writer:
+                    server_writer.close()
+                    try:
+                        await server_writer.wait_closed()
+                    except Exception:
+                        pass
+
+        try:
+            # Entire operation has a timeout of 3.0 seconds
+            online, max_players = await asyncio.wait_for(_do_query(), timeout=3.0)
+            self._source_players_cache = (online, max_players, time.time() + self._source_cache_duration)
+            return online, max_players
+        except Exception as e:
+            logger.debug(f"Failed to query source server {self.target_address}:{self.target_port} for players: {e}")
+            raise e
+
     async def handle_connection(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter):
+        task = asyncio.current_task()
+        self._conn_tasks.add(task)
         peer = client_writer.get_extra_info("peername")
         client_ip = peer[0] if peer else "Unknown"
 
@@ -143,8 +235,29 @@ class MinecraftProxyInstance:
                     raise ValueError(f"Status packet length {status_len} exceeds safe limit.")
                 status_id, _ = await read_varint(client_reader)
 
+                # Determine online and max players
+                online = None
+                max_players = None
+
+                if self.show_source_players:
+                    try:
+                        online, max_players = await self.query_source_server(protocol_version)
+                    except Exception:
+                        pass
+
+                if online is None or max_players is None:
+                    if self.user_specified_online is not None:
+                        online = self.user_specified_online
+                    else:
+                        online = self._active_connections
+
+                    if self.user_specified_max is not None:
+                        max_players = self.user_specified_max
+                    else:
+                        max_players = 1005
+
                 # Generate custom MOTD response (Packet ID = 0x00)
-                motd_json = self.generate_motd_json(protocol_version)
+                motd_json = self.generate_motd_json(protocol_version, online, max_players)
                 # JSON is prefixed with VarInt length
                 motd_payload = encode_varint(len(motd_json)) + motd_json
                 response_packet = create_packet(0x00, motd_payload)
@@ -160,7 +273,11 @@ class MinecraftProxyInstance:
                     if ping_id == 0x01:
                         # Read the remaining payload (timestamp / int64)
                         ping_payload = await client_reader.readexactly(ping_len - 1)
-                        if self.ping_mode == "0ms":
+                        if self.enable_ping_delay:
+                            # Return normal/actual ping
+                            ping_response = create_packet(0x01, ping_payload)
+                            client_writer.write(ping_response)
+                        elif self.ping_mode == "0ms":
                             # Return 0ms ping or custom respond
                             # 0ms responder: we can send 0 directly
                             ping_response = create_packet(0x01, b"\x00\x00\x00\x00\x00\x00\x00\x00")
@@ -293,6 +410,7 @@ class MinecraftProxyInstance:
                 await client_writer.wait_closed()
             except Exception:
                 pass
+            self._conn_tasks.discard(task)
 
 
     async def start(self):
@@ -302,10 +420,19 @@ class MinecraftProxyInstance:
 
 
     async def stop(self):
-        """Stops the local proxy listener."""
+        """Stops the local proxy listener, forcibly disconnecting all clients."""
         if self.server:
             self.server.close()
-            await self.server.wait_closed()
+
+            # Forcefully cancel all active connection handlers to disconnect clients immediately
+            for task in list(self._conn_tasks):
+                task.cancel()
+
+            # Do not wait indefinitely for lingering connections; give them a brief moment.
+            try:
+                await asyncio.wait_for(self.server.wait_closed(), timeout=2.0)
+            except asyncio.TimeoutError:
+                logger.warning(f"Service '{self.name}' force-closed with lingering connections.")
             logger.info(f"Service '{self.name}' stopped.")
 
 

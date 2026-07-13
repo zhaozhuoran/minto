@@ -101,6 +101,8 @@ class TestLogger(unittest.TestCase):
             self.assertIn("This is a test log message that should be archived.", content)
 
 
+import json
+
 class TestProxyAccessControl(unittest.TestCase):
     def test_ip_access(self):
         service_cfg = {
@@ -135,6 +137,275 @@ class TestProxyAccessControl(unittest.TestCase):
         self.assertTrue(inst.check_player_name_access("goodplayer"))
         self.assertFalse(inst.check_player_name_access("badplayer"))
         self.assertFalse(inst.check_player_name_access("griefer"))
+
+
+class MockMinecraftServer:
+    def __init__(self, port, online_players=123, max_players=456):
+        self.port = port
+        self.online_players = online_players
+        self.max_players = max_players
+        self.server = None
+
+    async def start(self):
+        self.server = await asyncio.start_server(self.handle, "127.0.0.1", self.port)
+
+    async def stop(self):
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
+
+    async def handle(self, reader, writer):
+        try:
+            # Read handshake packet
+            packet_len, _ = await read_varint(reader)
+            await reader.readexactly(packet_len)
+
+            # Read status request packet
+            packet_len, _ = await read_varint(reader)
+            await reader.readexactly(packet_len)
+
+            # Send Status Response
+            motd_obj = {
+                "version": {"name": "Mock Server", "protocol": 763},
+                "players": {"max": self.max_players, "online": self.online_players},
+                "description": {"text": "Mock"}
+            }
+            motd_json = json.dumps(motd_obj).encode("utf-8")
+            motd_payload = encode_varint(len(motd_json)) + motd_json
+            response = create_packet(0x00, motd_payload)
+            writer.write(response)
+            await writer.drain()
+        except Exception:
+            pass
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+
+class TestNewFeatures(unittest.TestCase):
+    def test_default_players_and_user_specified(self):
+        # 1. Test fallback to default 0/1005 when not specified
+        config_no_specified = {
+            "Name": "test",
+            "Listen": 25565,
+            "TargetAddress": "localhost",
+            "TargetPort": 25565,
+            "Minecraft": {
+                "OnlineCount": {
+                    "Online": -1,
+                    "Max": 2026
+                }
+            }
+        }
+        inst = MinecraftProxyInstance(config_no_specified)
+        self.assertEqual(inst.user_specified_online, None)
+        self.assertEqual(inst.max_players, 2026)
+
+        # 2. Test when both are not specified / missing
+        config_missing = {
+            "Name": "test2",
+            "Listen": 25566,
+            "TargetAddress": "localhost",
+            "TargetPort": 25566,
+            "Minecraft": {}
+        }
+        inst2 = MinecraftProxyInstance(config_missing)
+        self.assertEqual(inst2.user_specified_online, None)
+        self.assertEqual(inst2.user_specified_max, None)
+        self.assertEqual(inst2.max_players, 1005)
+
+        # 3. Test when both are specified
+        config_both = {
+            "Name": "test3",
+            "Listen": 25567,
+            "TargetAddress": "localhost",
+            "TargetPort": 25567,
+            "Minecraft": {
+                "OnlineCount": {
+                    "Online": 42,
+                    "Max": 500
+                }
+            }
+        }
+        inst3 = MinecraftProxyInstance(config_both)
+        self.assertEqual(inst3.user_specified_online, 42)
+        self.assertEqual(inst3.user_specified_max, 500)
+        self.assertEqual(inst3.max_players, 500)
+
+    def test_integration_ping_and_players(self):
+        asyncio.run(self.run_integration_test_ping_and_players())
+
+    async def run_integration_test_ping_and_players(self):
+        # Start mock backend server
+        mock_server = MockMinecraftServer(25590, online_players=123, max_players=456)
+        await mock_server.start()
+
+        try:
+            # Start Minto proxy instance with ShowSourcePlayers = True and EnablePingDelay = True
+            service_cfg = {
+                "Name": "MintoTest",
+                "Listen": 25591,
+                "TargetAddress": "127.0.0.1",
+                "TargetPort": 25590,
+                "Minecraft": {
+                    "EnablePingDelay": True,
+                    "OnlineCount": {
+                        "ShowSourcePlayers": True
+                    }
+                }
+            }
+            proxy = MinecraftProxyInstance(service_cfg)
+            await proxy.start()
+
+            try:
+                # Connect as a client to the proxy
+                client_reader, client_writer = await asyncio.open_connection("127.0.0.1", 25591)
+
+                try:
+                    # Send Handshake packet
+                    handshake = HandshakePacket(protocol_version=763, server_address="127.0.0.1", server_port=25591, next_state=1)
+                    client_writer.write(handshake.encode())
+
+                    # Send Status Request
+                    client_writer.write(create_packet(0x00, b""))
+                    await client_writer.drain()
+
+                    # Read Status Response
+                    packet_len, _ = await read_varint(client_reader)
+                    packet_id, _ = await read_varint(client_reader)
+                    self.assertEqual(packet_id, 0x00)
+
+                    payload_len = packet_len - 1
+                    payload = await client_reader.readexactly(payload_len)
+                    from minto.protocol.packet import read_string
+                    json_str, _ = read_string(payload, 0)
+
+                    # Verify players from backend mock server are returned!
+                    data = json.loads(json_str)
+                    self.assertEqual(data["players"]["online"], 123)
+                    self.assertEqual(data["players"]["max"], 456)
+
+                    # Send Ping packet (ID 0x01) with 8 bytes timestamp payload
+                    ping_payload = b"\x11\x22\x33\x44\x55\x66\x77\x88"
+                    client_writer.write(create_packet(0x01, ping_payload))
+                    await client_writer.drain()
+
+                    # Read Ping Response
+                    ping_len, _ = await read_varint(client_reader)
+                    ping_id, _ = await read_varint(client_reader)
+                    self.assertEqual(ping_id, 0x01)
+                    returned_payload = await client_reader.readexactly(ping_len - 1)
+                    self.assertEqual(returned_payload, ping_payload)
+
+                finally:
+                    client_writer.close()
+                    await client_writer.wait_closed()
+
+            finally:
+                await proxy.stop()
+
+        finally:
+            await mock_server.stop()
+
+    def test_integration_defaults(self):
+        asyncio.run(self.run_integration_defaults())
+
+    async def run_integration_defaults(self):
+        # Start Minto proxy instance with ShowSourcePlayers = False and default fallback
+        service_cfg = {
+            "Name": "MintoTest",
+            "Listen": 25592,
+            "TargetAddress": "127.0.0.1",
+            "TargetPort": 25590,
+            "Minecraft": {
+                "OnlineCount": {
+                    "Online": -1,
+                    "Max": -1
+                }
+            }
+        }
+        proxy = MinecraftProxyInstance(service_cfg)
+        await proxy.start()
+
+        try:
+            # Connect as a client to the proxy
+            client_reader, client_writer = await asyncio.open_connection("127.0.0.1", 25592)
+
+            try:
+                # Send Handshake packet
+                handshake = HandshakePacket(protocol_version=763, server_address="127.0.0.1", server_port=25592, next_state=1)
+                client_writer.write(handshake.encode())
+
+                # Send Status Request
+                client_writer.write(create_packet(0x00, b""))
+                await client_writer.drain()
+
+                # Read Status Response
+                packet_len, _ = await read_varint(client_reader)
+                packet_id, _ = await read_varint(client_reader)
+                self.assertEqual(packet_id, 0x00)
+
+                payload_len = packet_len - 1
+                payload = await client_reader.readexactly(payload_len)
+                from minto.protocol.packet import read_string
+                json_str, _ = read_string(payload, 0)
+
+                # Verify default player counts are returned (active connections / 1005)
+                data = json.loads(json_str)
+                self.assertEqual(data["players"]["online"], 1)
+                self.assertEqual(data["players"]["max"], 1005)
+
+            finally:
+                client_writer.close()
+                await client_writer.wait_closed()
+
+        finally:
+            await proxy.stop()
+
+    def test_integration_caching(self):
+        asyncio.run(self.run_integration_caching())
+
+    async def run_integration_caching(self):
+        mock_server = MockMinecraftServer(25593, online_players=789, max_players=1011)
+        await mock_server.start()
+
+        try:
+            service_cfg = {
+                "Name": "MintoTestCache",
+                "Listen": 25594,
+                "TargetAddress": "127.0.0.1",
+                "TargetPort": 25593,
+                "Minecraft": {
+                    "OnlineCount": {
+                        "ShowSourcePlayers": True
+                    }
+                }
+            }
+            proxy = MinecraftProxyInstance(service_cfg)
+            await proxy.start()
+
+            try:
+                # Query once (populates cache)
+                online1, max1 = await proxy.query_source_server(763)
+                self.assertEqual(online1, 789)
+                self.assertEqual(max1, 1011)
+
+                # Stop backend mock server completely
+                await mock_server.stop()
+
+                # Query second time (should hit cache and succeed without throwing connection error)
+                online2, max2 = await proxy.query_source_server(763)
+                self.assertEqual(online2, 789)
+                self.assertEqual(max2, 1011)
+
+            finally:
+                await proxy.stop()
+
+        finally:
+            await mock_server.stop()
 
 
 if __name__ == "__main__":

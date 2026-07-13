@@ -22,9 +22,11 @@ DEFAULT_CONFIG = {
             "Minecraft": {
                 "EnableHostnameRewrite": True,
                 "RewrittenHostname": "mc.hypixel.net",
+                "EnablePingDelay": False, # Optional: Enable delay display showing client-to-proxy latency (overrides PingMode if True)
                 "OnlineCount": {
                     "Max": 2026,
                     "Online": -1, # -1 means proxy/actual current online count
+                    "ShowSourcePlayers": False, # Optional: Show player count from source/backend server
                     "EnableMaxLimit": False
                 },
                 "NameAccess": {
