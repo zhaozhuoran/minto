@@ -12,6 +12,13 @@ The public demo lets you see Minto's behavior without setting up a local instanc
 
 > **Important:** The public demo is a temporary preview service, not a production service. Do not rely on it for permanent access, and do not use it for anything that requires guaranteed availability.
 
+> **Connection issues:** In some regions, the demo may occasionally show a
+> connection interrupted or disconnected error due to regional network
+> conditions, routing, or cross-border connectivity. This does not necessarily
+> indicate a problem with the Minto service. For example, users in mainland
+> China may experience intermittent disconnections due to instability or
+> congestion on international network egress and cross-border routes.
+
 ## What Minto does
 
 Minto is not a self-contained web service or a command-line tool that produces
