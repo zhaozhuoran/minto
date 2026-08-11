@@ -1,39 +1,72 @@
 # DEMO
 
-> Why Minto has no live demo — and how to build your own working one.
+## Public demo
 
-## Why there is no (and cannot be) a public demo
+Minto currently has a **public preview demo** available at:
+
+**`hkg.yearcakes.eu.org:21005`**
+
+This instance is provided **for preview and demonstration purposes only** and is **temporarily open**. Availability, configuration, and access may change, or the demo may be taken offline at any time.
+
+The public demo lets you see Minto's behavior without setting up a local instance first.
+
+> **Important:** The public demo is a temporary preview service, not a production service. Do not rely on it for permanent access, and do not use it for anything that requires guaranteed availability.
+
+## What Minto does
 
 Minto is not a self-contained web service or a command-line tool that produces
-output you can look at. It is a **transparent Minecraft network proxy** that
-must sit **between** a real Minecraft client and a real backend Minecraft server.
+output you can simply look at. It is a **transparent Minecraft network proxy**
+that sits **between** a real Minecraft client and a real backend Minecraft
+server.
 
-A runnable demo would require all of the following to exist at the same time:
+A typical Minto deployment looks like this:
 
-- A **Minecraft Java Edition client** (a real game instance) to connect with.
-- A **reachable backend Minecraft server** that
-  Minto forwards traffic to — e.g. a public server such as Hypixel, or your own
-  self-hosted server.
-- A **network path** where the client connects to Minto's listen port instead of
-  connecting to the backend directly.
+```text
+Minecraft Client  ──▶  Minto  ──▶  Backend MC Server
+                         · rewrites hostname
+                         · serves custom MOTD
+                         · enforces IP / name ACL
+```
 
-None of these can be provided for you by a static site, a CI job, or a hosted
-sandbox:
+The client connects to Minto's listen port, while Minto transparently forwards
+the connection to the backend server configured by the administrator.
 
-- Minto proxies the **raw Minecraft protocol**, not HTTP — there is no web page
-  to open.
-- The "interesting" behavior (handshake sniffing, hostname rewriting, MOTD
-  injection, access control) is only visible _from inside a Minecraft client_,
-  via the server list and the login flow.
-- A hosted demo would have to expose a backend server and consume real game
-  sessions, which is neither practical nor safe to publish.
+## Try the public demo
 
-So instead of a clickable demo, this document tells you exactly how to stand one
-up yourself in a few minutes.
+To preview Minto without installing anything:
+
+1. Open **Minecraft Java Edition**.
+2. Add a new multiplayer server.
+3. Use the following server address:
+
+```text
+hkg.yearcakes.eu.org:21005
+```
+
+4. View the server entry in the multiplayer server list.
+5. If the demo is currently online, you can connect and observe Minto's proxy
+   behavior from the Minecraft client.
+
+Because this is a temporary public preview instance, the backend server,
+configuration, access policy, and availability may change without notice.
+
+## Why a local demo may still be useful
+
+The public demo is intended to provide a quick way to see Minto in action, but
+it cannot expose every possible configuration or feature.
+
+Minto's behavior depends on the actual Minecraft client, network connection,
+and backend server. Features such as hostname rewriting, access control, MOTD
+configuration, and forwarding behavior may also be configured differently
+between deployments.
+
+If you want to experiment with Minto's configuration, test a specific backend,
+or run it as part of your own Minecraft network, the recommended approach is to
+run your own instance.
 
 ## What you will build
 
-```
+```text
 Minecraft Client  ──▶  Minto (localhost:25565)  ──▶  Backend MC Server
                         · rewrites hostname
                         · serves custom MOTD
@@ -51,7 +84,7 @@ optionally rewrites) the connection to whatever backend you configure.
   - a public server you normally play on (e.g. `mc.hypixel.net:25565`), or
   - your own Minecraft server reachable from the machine running Minto.
 
-## Step-by-step: run a working demo
+## Step-by-step: run your own working demo
 
 ### 1. Clone and enter the project
 
@@ -72,8 +105,8 @@ python main.py
 ### 3. Edit `config/config.json`
 
 Point `TargetAddress` / `TargetPort` at your chosen backend. The default
-template already targets `mc.hypixel.net:25565`, which works as a ready-made
-demo backend:
+template already targets `mc.hypixel.net:25565`, which can be used as a
+convenient demo backend:
 
 ```jsonc
 {
@@ -105,7 +138,7 @@ python main.py
 
 You should see the banner and a listener line:
 
-```
+```text
 Service 'Hypixel-in' listening on 0.0.0.0:25565 -> forwarding to mc.hypixel.net:25565
 ```
 
@@ -118,7 +151,7 @@ Service 'Hypixel-in' listening on 0.0.0.0:25565 -> forwarding to mc.hypixel.net:
 4. Join — Minto sniffs the handshake, rewrites the hostname, applies any access
    controls, and tunnels you to the backend.
 
-That is the working demo. Stop Minto any time with `Ctrl+C`.
+That is a fully working local demo. Stop Minto any time with `Ctrl+C`.
 
 ## Trying the special features
 
@@ -131,4 +164,4 @@ That is the working demo. Stop Minto any time with `Ctrl+C`.
 - **Online count** — set `OnlineCount.Online` to a fixed number to override what
   the server list reports.
 
-See [`README.md`](README.md) for the full configuration reference.
+For the full configuration reference, see `README.md`.
