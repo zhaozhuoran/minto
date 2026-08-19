@@ -1,6 +1,6 @@
 # Minto
 
-**Minto** is a lightweight Minecraft proxy built with pure Python. It requires zero third-party dependencies while remaining fully asynchronous, configurable, and easy to extend.
+Minto is a lightweight Minecraft proxy built with pure Python. It requires zero third-party dependencies while remaining fully asynchronous, configurable, and easy to extend.
 
 It sits between Minecraft clients and a backend server, transparently inspects the Minecraft handshake, rewrites the target hostname/port, applies access controls, and serves a fully customizable server-list MOTD.
 
@@ -10,44 +10,9 @@ It sits between Minecraft clients and a backend server, transparently inspects t
 
 ![Screenshot 1](assets/screenshot-1.png)
 
-## Why Minto?
-
-- **Zero dependencies** — runs on the Python standard library alone (`asyncio`, `struct`, `zlib`, …). Nothing to `pip install`.
-- **Readable & hackable** — clean, well-documented modules for the Minecraft protocol, proxying, and logging.
-- **Self-contained MOTD** — generates a valid favicon PNG in code, no image libraries needed.
-- **Config-driven** — define one or many proxy services in a single JSON file.
-
-## Features
-
-Networking
-
-- Async TCP proxy
-- Handshake sniffing
-- Hostname rewriting
-
-Server List (MOTD)
-
-- Custom MOTD (with `{NAME}`, `{HOST}`, `{PORT}` placeholders)
-- Custom favicon (in-code PNG generator or your own base64)
-- Ping handling: `disconnect` / `0ms` / `normal`
-- Optional live ping-delay (latency) display
-- Optional backend player-count passthrough
-
-Security
-
-- IP allow/deny
-- Player allow/deny
-- Max-player limit
-
-Misc
-
-- Config-driven multi-service logging
-- Multi-service
-
 ## Requirements
 
 - Python **3.10+**
-- No external packages
 
 ## Quick Start
 
@@ -55,7 +20,7 @@ Misc
 git clone https://github.com/zhaozhuoran/minto
 cd minto
 
-# First run generates config/config.json and exits with instructions
+# First run generates config/config.json and exits
 python main.py
 
 # Edit config/config.json, then run again
@@ -164,17 +129,6 @@ tests/test_minto.py  unittest suite
 ```bash
 python -m unittest discover -s tests
 ```
-
-## Roadmap
-
-- Config hot-reload & modular routing engine
-- Linux socket performance optimizations
-
-## 🌟 Project Origin
-
-This project was developed as part of HackClub Stardance.
-
-View the original project page: [https://stardance.hackclub.com/projects/33308](https://stardance.hackclub.com/projects/33308)
 
 ## License
 
